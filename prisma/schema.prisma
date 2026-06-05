@@ -1,0 +1,392 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum GuardianRoleType {
+  PRIMARY_GUARDIAN
+  SECONDARY_GUARDIAN
+  PEDIATRICIAN_VIEWER
+  SCHOOL_COUNSELOR_VIEWER
+  EMERGENCY_CONTACT
+}
+
+enum RiskBand {
+  LOW
+  WATCH
+  CONCERNING
+  URGENT
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  DISMISSED
+  ESCALATED
+  RESOLVED
+}
+
+enum IncidentStatus {
+  DRAFT
+  OPEN
+  REVIEWED
+  SHARED
+}
+
+enum ExportStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum ReportFormat {
+  PDF
+}
+
+enum ConsentType {
+  PRIVACY_RULES
+  LEGAL_RESPONSIBILITY
+  BABY_MONITOR
+  AUDIO_MODE
+  SHARE_REPORTS
+}
+
+enum TimelineSource {
+  SENSOR
+  AUDIO
+  MANUAL
+  INCIDENT
+}
+
+model User {
+  id                  String            @id @default(cuid())
+  name                String
+  email               String            @unique
+  passwordHash        String?
+  isDemo              Boolean           @default(false)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  roles               GuardianRole[]
+  createdChildren     ChildProfile[]     @relation("ChildCreator")
+  createdIncidents    Incident[]        @relation("IncidentCreator")
+  updatedIncidents    Incident[]        @relation("IncidentUpdater")
+  createdReports      Report[]          @relation("ReportCreator")
+  createdExportRequests ExportRequest[] @relation("ExportRequestCreator")
+  auditLogs           AuditLog[]        @relation("AuditActor")
+  consents            ConsentRecord[]
+  linkedContacts      TrustedContact[]   @relation("LinkedContactUser")
+  recordedSensorEvents SensorEvent[]     @relation("SensorRecordedBy")
+  recordedAudioSignalEvents AudioSignalEvent[] @relation("AudioRecordedBy")
+}
+
+model ChildProfile {
+  id                  String            @id @default(cuid())
+  createdById         String
+  createdBy           User              @relation("ChildCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  name                String
+  ageMonths           Int
+  developmentStage    String
+  knownConditions     String[]
+  wellbeingNotes      String?
+  emergencyContacts   String[]
+  pediatricianContact String?
+  monitorModeEnabled  Boolean           @default(false)
+  audioModeEnabled    Boolean           @default(false)
+  audioModeMuted      Boolean           @default(false)
+  monitorListening    Boolean           @default(false)
+  consentConfirmed    Boolean           @default(false)
+  riskBand            RiskBand          @default(LOW)
+  riskScore           Float             @default(0)
+  lastSignalAt        DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  guardianRoles       GuardianRole[]
+  trustedContacts     TrustedContact[]
+  locations           Location[]
+  sensorEvents        SensorEvent[]
+  audioSignalEvents   AudioSignalEvent[]
+  incidents           Incident[]
+  riskScores          RiskScore[]
+  alerts              Alert[]
+  reports             Report[]
+  auditLogs           AuditLog[]
+  consents            ConsentRecord[]
+  exportRequests      ExportRequest[]
+}
+
+model GuardianRole {
+  id              String           @id @default(cuid())
+  userId          String
+  childProfileId  String
+  role            GuardianRoleType
+  permissions     Json
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, childProfileId, role])
+  @@index([childProfileId, role])
+}
+
+model TrustedContact {
+  id              String           @id @default(cuid())
+  childProfileId  String
+  linkedUserId    String?
+  name            String
+  relationship    String
+  role            GuardianRoleType
+  email           String?
+  phone           String?
+  canReceiveReports Boolean        @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  linkedUser      User?            @relation("LinkedContactUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
+
+  @@index([childProfileId, role])
+}
+
+model Location {
+  id              String           @id @default(cuid())
+  childProfileId  String
+  label           String
+  description     String?
+  riskContext     String?
+  isFrequent      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+
+  @@index([childProfileId, label])
+}
+
+model SensorEvent {
+  id              String           @id @default(cuid())
+  childProfileId  String
+  recordedById    String?
+  eventType       String
+  source          TimelineSource   @default(SENSOR)
+  severity        AlertSeverity
+  confidence      Float
+  occurredAt      DateTime
+  durationSeconds Int?
+  notes           String
+  location        String?
+  contact         String?
+  reviewedByGuardian Boolean       @default(false)
+  createdAt       DateTime         @default(now())
+
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  recordedBy      User?            @relation("SensorRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  audioSignalEvents AudioSignalEvent[] @relation("AudioSource")
+  alerts          Alert[]          @relation("SensorAlert")
+
+  @@index([childProfileId, occurredAt])
+}
+
+model AudioSignalEvent {
+  id              String           @id @default(cuid())
+  childProfileId  String
+  recordedById    String?
+  sensorEventId   String?
+  signalType      String
+  severity        AlertSeverity
+  confidence      Float
+  occurredAt      DateTime
+  windowSeconds   Int
+  localOnly       Boolean          @default(true)
+  summary         String
+  transcriptExcerpt String?
+  rawAudioSaved   Boolean          @default(false)
+  savedClipLabel  String?
+  reviewedByGuardian Boolean       @default(false)
+  createdAt       DateTime         @default(now())
+
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  recordedBy      User?            @relation("AudioRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+  sensorEvent     SensorEvent?     @relation("AudioSource", fields: [sensorEventId], references: [id], onDelete: SetNull)
+  incidents       Incident[]       @relation("AudioIncident")
+  alerts          Alert[]          @relation("AudioAlert")
+
+  @@index([childProfileId, occurredAt])
+}
+
+model Incident {
+  id                String          @id @default(cuid())
+  childProfileId    String
+  createdById       String
+  updatedById       String?
+  audioSignalEventId String?
+  status            IncidentStatus   @default(OPEN)
+  whatHappened      String
+  whoWasPresent     String[]
+  whereDidItHappen  String
+  whenDidItHappen   DateTime
+  whatDidChildSayOrDo String
+  physicalSigns     String
+  emotionalSigns    String
+  evidenceAttached  Boolean          @default(false)
+  followUpNeeded    String
+  notes             String?
+  reviewedByGuardian Boolean        @default(false)
+  savedClipLabel    String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  childProfile      ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  createdBy         User             @relation("IncidentCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  updatedBy         User?            @relation("IncidentUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  audioSignalEvent  AudioSignalEvent? @relation("AudioIncident", fields: [audioSignalEventId], references: [id], onDelete: SetNull)
+  alerts            Alert[]          @relation("IncidentAlert")
+
+  @@index([childProfileId, whenDidIt happen])
+}
+
+model RiskScore {
+  id              String           @id @default(cuid())
+  childProfileId  String
+  score           Float
+  band            RiskBand
+  confidence      Float
+  summary         String
+  recommendation  String
+  factors         Json
+  windowDays      Int              @default(30)
+  sourceVersion   String
+  calculatedAt    DateTime         @default(now())
+
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  reports         Report[]
+
+  @@index([childProfileId, calculatedAt])
+}
+
+model Alert {
+  id              String           @id @default(cuid())
+  childProfileId  String
+  relatedIncidentId String?
+  relatedSensorEventId String?
+  relatedAudioSignalEventId String?
+  severity        AlertSeverity
+  reason          String
+  confidence      Float
+  suggestedAction String
+  status          AlertStatus      @default(OPEN)
+  source          TimelineSource
+  sourceLabel     String
+  reviewedByGuardian Boolean       @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  relatedIncident Incident?        @relation("IncidentAlert", fields: [relatedIncidentId], references: [id], onDelete: SetNull)
+  relatedSensorEvent SensorEvent?  @relation("SensorAlert", fields: [relatedSensorEventId], references: [id], onDelete: SetNull)
+  relatedAudioSignalEvent AudioSignalEvent? @relation("AudioAlert", fields: [relatedAudioSignalEventId], references: [id], onDelete: SetNull)
+
+  @@index([childProfileId, status, severity])
+}
+
+model Report {
+  id                  String           @id @default(cuid())
+  childProfileId      String
+  createdById         String
+  riskScoreId         String?
+  title               String
+  summary             String
+  riskBand            RiskBand
+  riskScore           Float
+  timeline            Json
+  patterns            Json
+  guardianNotes       String
+  attachedIncidentIds String[]
+  recommendedQuestions String[]
+  disclaimer          String
+  format              ReportFormat
+  generatedAt         DateTime         @default(now())
+
+  childProfile        ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  createdBy           User             @relation("ReportCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  riskScoreRecord     RiskScore?       @relation(fields: [riskScoreId], references: [id], onDelete: SetNull)
+  exportRequests      ExportRequest[]
+
+  @@index([childProfileId, generatedAt])
+}
+
+model WorkspaceSnapshot {
+  key        String   @id
+  data       Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model AuditLog {
+  id              String           @id @default(cuid())
+  childProfileId  String?
+  userId          String
+  action          String
+  targetType      String
+  targetId        String?
+  severity        String
+  details         Json
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime         @default(now())
+
+  childProfile    ChildProfile?    @relation(fields: [childProfileId], references: [id], onDelete: SetNull)
+  user            User             @relation("AuditActor", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model ConsentRecord {
+  id                      String       @id @default(cuid())
+  userId                  String
+  childProfileId          String?
+  consentType             ConsentType
+  accepted                Boolean
+  legalResponsibleConfirmed Boolean
+  privacyRulesAccepted    Boolean
+  version                 String
+  grantedAt               DateTime     @default(now())
+  ipAddress               String?
+  userAgent               String?
+
+  user                    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  childProfile            ChildProfile? @relation(fields: [childProfileId], references: [id], onDelete: SetNull)
+
+  @@index([userId, consentType])
+}
+
+model ExportRequest {
+  id              String           @id @default(cuid())
+  userId          String
+  childProfileId  String
+  reportId        String?
+  format          ReportFormat     @default(PDF)
+  status          ExportStatus     @default(PENDING)
+  requestedReason String?
+  requestedAt     DateTime         @default(now())
+  completedAt     DateTime?
+  downloadToken   String
+
+  user            User             @relation("ExportRequestCreator", fields: [userId], references: [id], onDelete: Cascade)
+  childProfile    ChildProfile     @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  report          Report?          @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  @@index([childProfileId, status])
+}
